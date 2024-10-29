@@ -1,0 +1,26 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+
+RWTexture2D<float4> Result;
+RWTexture3D<float4> Volume;
+
+float Resolution;
+float Width;
+float Height;
+float LeftOver;
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    int xCoord = id.x % Resolution;
+    int yCoord = id.y % Resolution;
+    int zCoord = floor(id.x / Resolution) + floor(id.y / Resolution) * Width;
+
+    float3 destination = float3(xCoord, zCoord, yCoord);
+
+    if((floor(id.y / Resolution) * Width + floor(id.x / Resolution)) < Width * Height - LeftOver && Volume[destination].a > 0)
+        Result[id.xy] = Volume[destination];
+}

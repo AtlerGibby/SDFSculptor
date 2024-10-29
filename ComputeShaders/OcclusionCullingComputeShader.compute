@@ -1,0 +1,384 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel FrustumCulling
+#pragma kernel OcclusionCulling
+#pragma kernel FrustumCullingDynamic
+#pragma kernel OcclusionCullingDynamic
+#pragma kernel SetMaterialProperties
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+//RWTexture2D<float4> Result;
+
+struct BoundingBox
+{
+    float3 center;
+    float3 drb;
+    float3 drf;
+    float3 dlb;
+    float3 dlf;
+    float3 urb;
+    float3 urf;
+    float3 ulb;
+    float3 ulf;
+    float radius;
+};
+
+struct InstanceProperties
+{
+    float4x4 m;
+    float4 tintColor;
+    float tintAmount;
+    float metallic;
+    float smoothness;
+    float emission;
+    float cmpA;
+    float cmpB;
+    float cmpC;
+    float cmpD;
+};
+
+StructuredBuffer<BoundingBox> bbs;
+RWStructuredBuffer<float> fCullResults;
+RWStructuredBuffer<float> oCullResults;
+RWStructuredBuffer<float> lodFirstTransitionThresholds;
+RWStructuredBuffer<float> lodTransitionScalars;
+RWStructuredBuffer<float2> topLeft;
+RWStructuredBuffer<float2> bottomLeft;
+RWStructuredBuffer<float2> topRight;
+RWStructuredBuffer<float2> bottomRight;
+RWStructuredBuffer<int> meshIndex;
+RWTexture2D<float4> depthTexture;
+float4x4 worldToCamMatrix;
+float4x4 camToWorldMatrix;
+float4 mainCamPos;
+float4 ncpTopLeft;
+float4 ncpTopRight;
+float4 ncpBottomLeft;
+float4 ncpBottomRight;
+float4 camRect;
+float screenW;
+float screenH;
+float depthTextureW;
+float depthTextureH;
+float screenCorner;
+float nearClipPlane;
+float farClipPlane;
+float boundsError;
+float depthError;
+float verticalError;
+int whichCam;
+
+StructuredBuffer<BoundingBox> bbsDynamic;
+RWStructuredBuffer<float> fCullResultsDynamic;
+RWStructuredBuffer<float> oCullResultsDynamic;
+RWStructuredBuffer<float> lodFirstTransitionThresholdsDynamic;
+RWStructuredBuffer<float> lodTransitionScalarsDynamic;
+RWStructuredBuffer<float2> topLeftDynamic;
+RWStructuredBuffer<float2> bottomLeftDynamic;
+RWStructuredBuffer<float2> topRightDynamic;
+RWStructuredBuffer<float2> bottomRightDynamic;
+RWStructuredBuffer<int> meshIndexDynamic;
+
+RWStructuredBuffer<InstanceProperties> instanceData;
+RWTexture2D<float4> tint;
+RWTexture2D<float4> props;
+RWTexture2D<float4> props2;
+int propCount;
+
+//bool InFrustum(float4x4 M, float3 p, float corner) 
+//{
+//    float4 Pclip = mul(M, float4(p.x, p.y, p.z, 1));
+//    Pclip /= length(mainCamPos.xyz - p);
+//    Pclip.x *= (screenW/screenH);
+//    return abs(Pclip.y) <= 0.5f && Pclip.x >= corner * -1 && Pclip.x < corner && Pclip.z < 0 && length(mainCamPos.xyz - p) < farClipPlane;
+//}
+
+float lerpFloat (float f1, float f2, float b)
+{
+    return f1 * (1 - b) + f2 * b;
+}
+
+float3 lerpFloat3 (float3 f1, float3 f2, float b)
+{
+    return f1 * (1 - b) + f2 * b;
+}
+
+//float3 WorldToScreen(float4x4 M, float3 p, float corner) 
+//{
+//    float4 Pclip = mul(M, float4(p.x, p.y, p.z, 1));
+//    Pclip /= length(mainCamPos.xyz - p);
+//    Pclip.x *= (screenW/screenH);
+//    return float3(lerpFloat(0, screenW, (Pclip.x + corner)/(2*corner)), lerpFloat(0, screenW, (Pclip.y + 0.5f)), Pclip.z);
+//}
+
+float3 WorldToViewPort(float4x4 M, float3 p, float corner) 
+{
+    float4 Pclip = mul(M, float4(p.x, p.y, p.z, 1));
+    Pclip /= length(mainCamPos.xyz - p);
+    Pclip.x *= (depthTextureW/depthTextureH);
+    //Pclip.x /= camRect.z;
+    //Pclip.x += (1 - camRect.z) - camRect.x;
+    return Pclip.xyz;
+}
+
+bool InViewPortFrustum(float3 p, float3 objPos)
+{
+    //if((camRect.x - 0.5) * 2 * screenCorner > p.x || (camRect.x + camRect.z - 0.5) * 2 * screenCorner < p.x ||
+    //(camRect.y - 0.5) > p.y || (camRect.y + camRect.w - 0.5) < p.y)
+    //    return false;
+        
+    return p.z < 0 &&
+        length(objPos - mainCamPos.xyz) < farClipPlane &&
+        abs(p.y) <= (0.5f + verticalError)  && p.x >= screenCorner * -1 && //  + (camRect.x * camRect.z) &&
+        p.x < screenCorner;// * camRect.z;// + (camRect.x * camRect.z);
+}
+
+float3 GetTopLeft (float3 drb,float3 drf,float3 dlb,float3 dlf,float3 urb,float3 urf,float3 ulb,float3 ulf)
+{
+    float x = min(min(min(min(min(min(min(drb.x, drf.x), dlb.x), dlf.x), urb.x), urf.x), ulb.x), ulf.x);
+    float y = max(max(max(max(max(max(max(drb.y, drf.y), dlb.y), dlf.y), urb.y), urf.y), ulb.y), ulf.y);
+    return float3(x,y,0);
+}
+
+float3 GetTopRight (float3 drb,float3 drf,float3 dlb,float3 dlf,float3 urb,float3 urf,float3 ulb,float3 ulf)
+{
+    float x = max(max(max(max(max(max(max(drb.x, drf.x), dlb.x), dlf.x), urb.x), urf.x), ulb.x), ulf.x);
+    float y = max(max(max(max(max(max(max(drb.y, drf.y), dlb.y), dlf.y), urb.y), urf.y), ulb.y), ulf.y);
+    return float3(x,y,0);
+}
+
+float3 GetBottomLeft (float3 drb,float3 drf,float3 dlb,float3 dlf,float3 urb,float3 urf,float3 ulb,float3 ulf)
+{
+    float x = min(min(min(min(min(min(min(drb.x, drf.x), dlb.x), dlf.x), urb.x), urf.x), ulb.x), ulf.x);
+    float y = min(min(min(min(min(min(min(drb.y, drf.y), dlb.y), dlf.y), urb.y), urf.y), ulb.y), ulf.y);
+    return float3(x,y,0);
+}
+
+float3 GetBottomRight (float3 drb,float3 drf,float3 dlb,float3 dlf,float3 urb,float3 urf,float3 ulb,float3 ulf)
+{
+    float x = max(max(max(max(max(max(max(drb.x, drf.x), dlb.x), dlf.x), urb.x), urf.x), ulb.x), ulf.x);
+    float y = min(min(min(min(min(min(min(drb.y, drf.y), dlb.y), dlf.y), urb.y), urf.y), ulb.y), ulf.y);
+    return float3(x,y,0);
+}
+
+
+[numthreads(64,1,1)]
+void FrustumCulling (uint3 id : SV_DispatchThreadID)
+{
+    // TODO: insert actual code here!
+
+    //Result[id.xy] = float4(id.x & id.y, (id.x & 15)/15.0, (id.y & 15)/15.0, 0.0);
+
+    float3 drb = 0;
+    float3 drf = 0;
+    float3 dlb = 0;
+    float3 dlf = 0;
+    float3 urb = 0;
+    float3 urf = 0;
+    float3 ulb = 0;
+    float3 ulf = 0;
+    float3 center = 0;
+
+    int visibleCorners = 0;
+    //int i = 0;
+    //for(i = 0; i < bbs.Length; i++)
+    //{
+        drb = WorldToViewPort(worldToCamMatrix, bbs[id.x].drb, screenCorner);
+        drf = WorldToViewPort(worldToCamMatrix, bbs[id.x].drf, screenCorner);
+        dlb = WorldToViewPort(worldToCamMatrix, bbs[id.x].dlb, screenCorner);
+        dlf = WorldToViewPort(worldToCamMatrix, bbs[id.x].dlf, screenCorner);
+        urb = WorldToViewPort(worldToCamMatrix, bbs[id.x].urb, screenCorner);
+        urf = WorldToViewPort(worldToCamMatrix, bbs[id.x].urf, screenCorner);
+        ulb = WorldToViewPort(worldToCamMatrix, bbs[id.x].ulb, screenCorner);
+        ulf = WorldToViewPort(worldToCamMatrix, bbs[id.x].ulf, screenCorner);
+        center = WorldToViewPort(worldToCamMatrix, bbs[id.x].center, screenCorner);
+
+        if(InViewPortFrustum(drb, bbs[id.x].drb))
+            visibleCorners += 1;
+        if(InViewPortFrustum(drf, bbs[id.x].drf))
+            visibleCorners += 1;
+        if(InViewPortFrustum(dlb, bbs[id.x].dlb))
+            visibleCorners += 1;
+        if(InViewPortFrustum(dlf, bbs[id.x].dlf))
+            visibleCorners += 1;
+        if(InViewPortFrustum(urb, bbs[id.x].urb))
+            visibleCorners += 1;
+        if(InViewPortFrustum(urf, bbs[id.x].urf))
+            visibleCorners += 1;
+        if(InViewPortFrustum(ulb, bbs[id.x].ulb))
+            visibleCorners += 1;
+        if(InViewPortFrustum(ulf, bbs[id.x].ulf))
+            visibleCorners += 1;
+        if(InViewPortFrustum(center, bbs[id.x].center))
+            visibleCorners += 1;
+        
+        if(visibleCorners > 0 || length(bbs[id.x].center - mainCamPos.xyz) < bbs[id.x].radius)
+        {
+            topLeft[id.x] = GetTopLeft(drb, drf, dlb, dlf, urb, urf, ulb, ulf).xy;
+            topRight[id.x] = GetTopRight(drb, drf, dlb, dlf, urb, urf, ulb, ulf).xy;
+            bottomLeft[id.x] = GetBottomLeft(drb, drf, dlb, dlf, urb, urf, ulb, ulf).xy;
+            bottomRight[id.x] = GetBottomRight(drb, drf, dlb, dlf, urb, urf, ulb, ulf).xy;
+            
+            //screenCoverage[id.x] = (length(topLeft[id.x] - bottomLeft[id.x]) * length(topLeft[id.x] - topRight[id.x])) / (screenCorner * 2);
+            float screenCoverage = (length(topLeft[id.x] - bottomLeft[id.x]) * length(topLeft[id.x] - topRight[id.x])) / (screenCorner * 2 * (depthTextureH/screenH) * ((depthTextureW/screenW)));
+            float interval = lodFirstTransitionThresholds[id.x];  //15.0f / lodTransitionScalars[id.x];
+            int mIndex = 0;
+            for (int j = 0; j < 20; j++)
+            {
+                if(screenCoverage < interval)
+                {
+                    interval /= lodTransitionScalars[id.x];
+                    mIndex += 1;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            meshIndex[id.x] = mIndex;
+            fCullResults[id.x] = screenCorner;//WorldToViewPort(worldToCamMatrix, bbs[id.x].center, screenCorner);
+        }
+        
+    //}
+}
+
+[numthreads(8,8,1)]
+void OcclusionCulling (uint3 id : SV_DispatchThreadID)
+{
+    //mul(unity_ObjectToWorld, float4(v.vertex.xyz, 1.0)).xyz - mainCamPos.xyz;
+
+    //float3 camRelativeWorldPos = mainCamPos.xyz;
+    //float3 viewPlane = camRelativeWorldPos.xyz / dot(camRelativeWorldPos.xyz, worldToCamMatrix._m20_m21_m22);
+    //float3 worldPos = viewPlane * ((1.0f - depthTexture[id.xy].x) * farClipPlane) + mainCamPos;
+    //worldPos = mul(camToWorldMatrix, float4(worldPos, 1.0));
+ 
+    //float3 up = ncpTopLeft - ncpBottomLeft;
+    //float3 right = ncpBottomRight - ncpBottomLeft;
+    //float3 worldPos = normalize((up * (id.y/screenH) + right * (id.x/screenW)) - mainCamPos) * ((1.0f - depthTexture[id.xy].x) * farClipPlane);
+    
+    int i = 0;
+    for(i = 0; i < (int)bbs.Length; i++)
+    {
+        if(fCullResults[i] > 0)
+        {
+            float xCoord = ((float(id.x)/depthTextureW) - 0.5) * 2 * screenCorner;
+            float yCoord = (float(id.y)/depthTextureH) - 0.5;
+
+            if(xCoord + camRect.x > topLeft[i].x - boundsError && xCoord + camRect.x > bottomLeft[i].x - boundsError && xCoord + camRect.x < topRight[i].x + boundsError && xCoord + camRect.x < bottomRight[i].x + boundsError &&
+            yCoord + camRect.y > bottomLeft[i].y - boundsError && yCoord + camRect.y > bottomRight[i].y - boundsError && yCoord + camRect.y < topLeft[i].y + boundsError && yCoord + camRect.y < topRight[i].y + boundsError)
+            {
+                float linearDepth = farClipPlane * nearClipPlane / ((nearClipPlane - farClipPlane) * (1-depthTexture[id.xy].x) + farClipPlane);
+                if(linearDepth >= length(bbs[i].center - mainCamPos.xyz) - (bbs[i].radius + depthError))
+                    oCullResults[i] = 1;
+            }
+        }
+    }
+}
+
+[numthreads(64,1,1)]
+void FrustumCullingDynamic (uint3 id : SV_DispatchThreadID)
+{
+    float3 drb = 0;
+    float3 drf = 0;
+    float3 dlb = 0;
+    float3 dlf = 0;
+    float3 urb = 0;
+    float3 urf = 0;
+    float3 ulb = 0;
+    float3 ulf = 0;
+
+    int visibleCorners = 0;
+
+    drb = WorldToViewPort(worldToCamMatrix, bbsDynamic[id.x].drb, screenCorner);
+    drf = WorldToViewPort(worldToCamMatrix, bbsDynamic[id.x].drf, screenCorner);
+    dlb = WorldToViewPort(worldToCamMatrix, bbsDynamic[id.x].dlb, screenCorner);
+    dlf = WorldToViewPort(worldToCamMatrix, bbsDynamic[id.x].dlf, screenCorner);
+    urb = WorldToViewPort(worldToCamMatrix, bbsDynamic[id.x].urb, screenCorner);
+    urf = WorldToViewPort(worldToCamMatrix, bbsDynamic[id.x].urf, screenCorner);
+    ulb = WorldToViewPort(worldToCamMatrix, bbsDynamic[id.x].ulb, screenCorner);
+    ulf = WorldToViewPort(worldToCamMatrix, bbsDynamic[id.x].ulf, screenCorner);
+
+    if(InViewPortFrustum(drb, bbsDynamic[id.x].drb))
+        visibleCorners += 1;
+    if(InViewPortFrustum(drf, bbsDynamic[id.x].drf))
+        visibleCorners += 1;
+    if(InViewPortFrustum(dlb, bbsDynamic[id.x].dlb))
+        visibleCorners += 1;
+    if(InViewPortFrustum(dlf, bbsDynamic[id.x].dlf))
+        visibleCorners += 1;
+    if(InViewPortFrustum(urb, bbsDynamic[id.x].urb))
+        visibleCorners += 1;
+    if(InViewPortFrustum(urf, bbsDynamic[id.x].urf))
+        visibleCorners += 1;
+    if(InViewPortFrustum(ulb, bbsDynamic[id.x].ulb))
+        visibleCorners += 1;
+    if(InViewPortFrustum(ulf, bbsDynamic[id.x].ulf))
+        visibleCorners += 1;
+    
+    if(visibleCorners > 0 || length(bbsDynamic[id.x].center - mainCamPos.xyz) < bbsDynamic[id.x].radius)
+    {
+        topLeftDynamic[id.x] = GetTopLeft(drb, drf, dlb, dlf, urb, urf, ulb, ulf).xy;
+        topRightDynamic[id.x] = GetTopRight(drb, drf, dlb, dlf, urb, urf, ulb, ulf).xy;
+        bottomLeftDynamic[id.x] = GetBottomLeft(drb, drf, dlb, dlf, urb, urf, ulb, ulf).xy;
+        bottomRightDynamic[id.x] = GetBottomRight(drb, drf, dlb, dlf, urb, urf, ulb, ulf).xy;
+        
+        float screenCoverage = (length(topLeftDynamic[id.x] - bottomLeftDynamic[id.x]) * length(topLeftDynamic[id.x] - topRightDynamic[id.x])) / (screenCorner * 2 * (depthTextureH/screenH) * ((depthTextureW/screenW)));
+        float interval = lodFirstTransitionThresholdsDynamic[id.x];  //15.0f / lodTransitionScalarsDynamic[id.x];
+        int mIndex = 0;
+        for (int j = 0; j < 20; j++)
+        {
+            if(screenCoverage < interval)
+            {
+                interval /= lodTransitionScalarsDynamic[id.x];
+                mIndex += 1;
+            }
+            else
+            {
+                break;
+            }
+        }
+        meshIndexDynamic[id.x] = mIndex;
+        fCullResultsDynamic[id.x] = screenCorner;
+    }
+        
+}
+
+[numthreads(8,8,1)]
+void OcclusionCullingDynamic (uint3 id : SV_DispatchThreadID)
+{
+    int i = 0;
+    for(i = 0; i < (int)bbsDynamic.Length; i++)
+    {
+        if(fCullResultsDynamic[i] > 0)
+        {
+            float xCoord = ((float(id.x)/depthTextureW) - 0.5) * 2 * screenCorner;
+            float yCoord = (float(id.y)/depthTextureH) - 0.5;
+
+            if(xCoord + camRect.x > topLeftDynamic[i].x - boundsError && xCoord + camRect.x > bottomLeftDynamic[i].x - boundsError && xCoord + camRect.x < topRightDynamic[i].x + boundsError && xCoord + camRect.x < bottomRightDynamic[i].x + boundsError &&
+            yCoord + camRect.y > bottomLeftDynamic[i].y - boundsError && yCoord + camRect.y > bottomRightDynamic[i].y - boundsError && yCoord + camRect.y < topLeftDynamic[i].y + boundsError && yCoord + camRect.y < topRightDynamic[i].y + boundsError)
+            {
+                float linearDepth = farClipPlane * nearClipPlane / ((nearClipPlane - farClipPlane) * (1-depthTexture[id.xy].x) + farClipPlane);
+                if(linearDepth >= length(bbsDynamic[i].center - mainCamPos.xyz) - (bbsDynamic[i].radius + depthError))
+                    oCullResultsDynamic[i] = 1;
+            }
+        }
+    }
+}
+
+[numthreads(8,8,1)]
+void SetMaterialProperties (uint3 id : SV_DispatchThreadID)
+{
+    float index = id.y * 32 + id.x;
+    if(index > propCount)
+    {
+        tint[id.xy] = float4(0,0,0,0);
+        props[id.xy] = float4(0,0,0,0);
+        props2[id.xy] = float4(0,0,0,0);
+    }
+    else
+    {
+        tint[id.xy] = instanceData[index].tintColor;
+        props[id.xy] = float4(instanceData[index].tintAmount, instanceData[index].metallic, instanceData[index].smoothness, instanceData[index].emission);
+        props2[id.xy] = float4(instanceData[index].cmpA,instanceData[index].cmpB,instanceData[index].cmpC,instanceData[index].cmpD);
+    }
+}

@@ -1,0 +1,83 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0e97bb8124ad1ae4b8a362eb1b68e435, type: 3}
+  m_Name: SDF_HUD_Data
+  m_EditorClassIdentifier: 
+  crossHairIcon: {fileID: 2800000, guid: 715d6163b5c63ef4484f7f465c74637e, type: 3}
+  grabIcon: {fileID: 2800000, guid: db4f56ba78807ee4882fdc0a10de4c49, type: 3}
+  rotateIcon: {fileID: 2800000, guid: 85010137a7a196946babc3a47f4a6567, type: 3}
+  scaleIcon: {fileID: 2800000, guid: 959bd2d9ba3253e4cb58b05c1a8df2fd, type: 3}
+  blendIcon: {fileID: 2800000, guid: 0eaaf7efb1e2e4146a50fc948c1bc6b2, type: 3}
+  roundIcon: {fileID: 2800000, guid: 455473606b9f50849af66321018489d0, type: 3}
+  warpStrengthIcon: {fileID: 2800000, guid: c5b06e3f48e50894b844e110b240e4c4, type: 3}
+  warpScaleIcon: {fileID: 2800000, guid: 943be8149ea95974f8a4055f2dbd64b8, type: 3}
+  warpPatternIcon: {fileID: 2800000, guid: 12f3f20b1b83bd14e85dcb664d6663be, type: 3}
+  colorIcon: {fileID: 2800000, guid: f35884df51fac534f85506e1f40d0a51, type: 3}
+  brushIcon: {fileID: 2800000, guid: ad884b0b304aa9d47b0d13917d039b74, type: 3}
+  addIcon: {fileID: 2800000, guid: 45fb033e4b385574780ef397a4b8c66d, type: 3}
+  subtractIcon: {fileID: 2800000, guid: f7e36a7b783831a4e98c19384cf1a7ad, type: 3}
+  intersectionIcon: {fileID: 2800000, guid: 0e1ebc6d7153d374e9814d4e3377ad8a, type: 3}
+  inverseIntersectionIcon: {fileID: 2800000, guid: 022cb6dbc79e3be4f99a662bd71a2788,
+    type: 3}
+  paintIcon: {fileID: 2800000, guid: 3ee1d06666ca1864f9a60384dd74a336, type: 3}
+  duplicateIcon: {fileID: 2800000, guid: 06b29650c033b03429923c9fcc9924d1, type: 3}
+  deleteIcon: {fileID: 2800000, guid: 717e4e8f6d4b6414baf054ee6d69d607, type: 3}
+  highlightMaterial: {fileID: 2100000, guid: ba14809782d87f940a6fcbfc508576ed, type: 2}
+  selectMaterial: {fileID: 2100000, guid: d8866a6caee91514699c28930223b24f, type: 2}
+  boxBrushPrefab: {fileID: 4556458433650573587, guid: 3fcacf7aa5cb66b4684cb686fa45d214,
+    type: 3}
+  sphereBrushPrefab: {fileID: 4556458433650573587, guid: f8ac3cb116c6bb64b90a02a7784510a8,
+    type: 3}
+  ellipsoidBrushPrefab: {fileID: 4556458433650573587, guid: 10d48f5c4a8b1cc40837f4956eb3139a,
+    type: 3}
+  torusBrushPrefab: {fileID: 4556458433650573587, guid: 7adf6b96b0cb1e54da868e0a69ee9feb,
+    type: 3}
+  linkBrushPrefab: {fileID: 4556458433650573587, guid: 810943facd5007045a79c2ccc1cf8dcb,
+    type: 3}
+  curveBrushPrefab: {fileID: 4556458433650573587, guid: c7c6d9e1635b95c4ba61e2def95cecba,
+    type: 3}
+  moveForwardKey: 119
+  moveBackwardKey: 115
+  moveLeftKey: 97
+  moveRightKey: 100
+  moveUpKey: 32
+  moveDownKey: 306
+  rotationSnappingKey: 32
+  selectionDepthKey: 304
+  speedKey: 304
+  viewToolsKey: 27
+  confirmKey: 13
+  xAxisKey: 120
+  yAxisKey: 121
+  zAxisKey: 122
+  useBrushKey: 101
+  regenerateMesh: 112
+  grabShortcut: 103
+  rotateShortcut: 114
+  scaleShortcut: 116
+  blendShortcut: 98
+  roundShortcut: 99
+  warpStrengthShortcut: 110
+  warpScaleShortcut: 109
+  warpPatternShortcut: 118
+  colorShortcut: 104
+  brushShortcut: 102
+  addShortcut: 61
+  subtractShortcut: 45
+  intersectionShortcut: 48
+  inverseIntersectionShortcut: 57
+  paintShortcut: 56
+  duplicateShortcut: 113
+  deleteShortcut: 8
+  undoShortcut: 44
+  redoShortcut: 46
+  spectatorShortcut: 308

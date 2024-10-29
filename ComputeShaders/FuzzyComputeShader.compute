@@ -1,0 +1,386 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+#pragma kernel RandomAlpha
+
+#pragma kernel OnMeshSurface
+
+#pragma kernel FlipOverAxis
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+//RWTexture2D<float4> Result;
+
+RWStructuredBuffer<float3> vertexBuffer;
+RWStructuredBuffer<float2> uvBuffer;
+RWStructuredBuffer<float3> normalBuffer;
+RWStructuredBuffer<float4> colorBuffer;
+
+RWStructuredBuffer<int> triangleBuffer;
+
+RWStructuredBuffer<float3> spawnPosBuffer;
+RWStructuredBuffer<float3> spawnNormBuffer;
+RWStructuredBuffer<int> boundsCheckBuffer;
+
+Texture2D<float4> noiseTexture;
+float4x4 objToWorld;
+
+float fuzzRotationOffset;
+float fuzzNoiseScale;
+float fuzzNoiseStrength;
+float fuzzScale;
+
+float density;
+float timeOffset;
+
+float4 boundsCenter;
+float4 boundsFront;
+float4 boundsBack;
+float4 boundsLeft;
+float4 boundsRight;
+float4 boundsTop;
+float4 boundsBottom;
+float4 surfacePosition;
+
+int xAxis;
+int yAxis;
+int zAxis;
+
+float4x4 inverse(float4x4 m) 
+{
+    float n11 = m[0][0], n12 = m[1][0], n13 = m[2][0], n14 = m[3][0];
+    float n21 = m[0][1], n22 = m[1][1], n23 = m[2][1], n24 = m[3][1];
+    float n31 = m[0][2], n32 = m[1][2], n33 = m[2][2], n34 = m[3][2];
+    float n41 = m[0][3], n42 = m[1][3], n43 = m[2][3], n44 = m[3][3];
+
+    float t11 = n23 * n34 * n42 - n24 * n33 * n42 + n24 * n32 * n43 - n22 * n34 * n43 - n23 * n32 * n44 + n22 * n33 * n44;
+    float t12 = n14 * n33 * n42 - n13 * n34 * n42 - n14 * n32 * n43 + n12 * n34 * n43 + n13 * n32 * n44 - n12 * n33 * n44;
+    float t13 = n13 * n24 * n42 - n14 * n23 * n42 + n14 * n22 * n43 - n12 * n24 * n43 - n13 * n22 * n44 + n12 * n23 * n44;
+    float t14 = n14 * n23 * n32 - n13 * n24 * n32 - n14 * n22 * n33 + n12 * n24 * n33 + n13 * n22 * n34 - n12 * n23 * n34;
+
+    float det = n11 * t11 + n21 * t12 + n31 * t13 + n41 * t14;
+    float idet = 1.0f / det;
+
+    float4x4 ret;
+
+    ret[0][0] = t11 * idet;
+    ret[0][1] = (n24 * n33 * n41 - n23 * n34 * n41 - n24 * n31 * n43 + n21 * n34 * n43 + n23 * n31 * n44 - n21 * n33 * n44) * idet;
+    ret[0][2] = (n22 * n34 * n41 - n24 * n32 * n41 + n24 * n31 * n42 - n21 * n34 * n42 - n22 * n31 * n44 + n21 * n32 * n44) * idet;
+    ret[0][3] = (n23 * n32 * n41 - n22 * n33 * n41 - n23 * n31 * n42 + n21 * n33 * n42 + n22 * n31 * n43 - n21 * n32 * n43) * idet;
+
+    ret[1][0] = t12 * idet;
+    ret[1][1] = (n13 * n34 * n41 - n14 * n33 * n41 + n14 * n31 * n43 - n11 * n34 * n43 - n13 * n31 * n44 + n11 * n33 * n44) * idet;
+    ret[1][2] = (n14 * n32 * n41 - n12 * n34 * n41 - n14 * n31 * n42 + n11 * n34 * n42 + n12 * n31 * n44 - n11 * n32 * n44) * idet;
+    ret[1][3] = (n12 * n33 * n41 - n13 * n32 * n41 + n13 * n31 * n42 - n11 * n33 * n42 - n12 * n31 * n43 + n11 * n32 * n43) * idet;
+
+    ret[2][0] = t13 * idet;
+    ret[2][1] = (n14 * n23 * n41 - n13 * n24 * n41 - n14 * n21 * n43 + n11 * n24 * n43 + n13 * n21 * n44 - n11 * n23 * n44) * idet;
+    ret[2][2] = (n12 * n24 * n41 - n14 * n22 * n41 + n14 * n21 * n42 - n11 * n24 * n42 - n12 * n21 * n44 + n11 * n22 * n44) * idet;
+    ret[2][3] = (n13 * n22 * n41 - n12 * n23 * n41 - n13 * n21 * n42 + n11 * n23 * n42 + n12 * n21 * n43 - n11 * n22 * n43) * idet;
+
+    ret[3][0] = t14 * idet;
+    ret[3][1] = (n13 * n24 * n31 - n14 * n23 * n31 + n14 * n21 * n33 - n11 * n24 * n33 - n13 * n21 * n34 + n11 * n23 * n34) * idet;
+    ret[3][2] = (n14 * n22 * n31 - n12 * n24 * n31 - n14 * n21 * n32 + n11 * n24 * n32 + n12 * n21 * n34 - n11 * n22 * n34) * idet;
+    ret[3][3] = (n12 * n23 * n31 - n13 * n22 * n31 + n13 * n21 * n32 - n11 * n23 * n32 - n12 * n21 * n33 + n11 * n22 * n33) * idet;
+
+    return ret;
+}
+
+float lerpFloat (float f1, float f2, float b)
+{
+    return f1 * (1 - b) + f2 * b;
+}
+
+float2 NoiseGradient(float2 intPos, float t)
+{
+    float rand = noiseTexture[intPos].r;
+    float angle = 6.283185f * rand + 4.0f * t * rand;
+    return float2(cos(angle), sin(angle));
+}
+
+// seed, size, strength
+float TextureNoise (float3 pos, float amount, float strength)
+{
+    pos *= (amount / 2);
+    float2 i = floor(pos.xy);
+    float2 f = pos.xy - i;
+    float2 blend = f * f * (3.0 - 2.0 * f);
+    float noiseVal = 
+        lerpFloat(
+            lerpFloat(
+                dot(NoiseGradient(i + float2(0, 0), pos.z), f - float2(0, 0)),
+                dot(NoiseGradient(i + float2(1, 0), pos.z), f - float2(1, 0)),
+                blend.x),
+            lerpFloat(
+                dot(NoiseGradient(i + float2(0, 1), pos.z), f - float2(0, 1)),
+                dot(NoiseGradient(i + float2(1, 1), pos.z), f - float2(1, 1)),
+                blend.x),
+        blend.y
+    );
+    return (noiseVal / 0.7f) * strength; // normalize to about [-1..1]
+}
+
+
+
+[numthreads(64,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    // TODO: insert actual code here!
+
+    //Result[id.xy] = float4(id.x & id.y, (id.x & 15)/15.0, (id.y & 15)/15.0, 0.0);
+
+    int index = id.x * 6;
+
+    float3 average = (vertexBuffer[index] + vertexBuffer[index+1] + vertexBuffer[index+2] + vertexBuffer[index+3] + vertexBuffer[index+4] + vertexBuffer[index+5])/6;
+
+    float3 normal = (normalBuffer[index] + normalBuffer[index+1] + normalBuffer[index+2] + normalBuffer[index+3] + normalBuffer[index+4] + normalBuffer[index+5])/6;
+    normal = normalize(normal);
+
+    float4 col = (colorBuffer[index] + colorBuffer[index+1] + colorBuffer[index+2] + colorBuffer[index+3] + colorBuffer[index+4] + colorBuffer[index+5])/6;
+
+    float biggest = length(vertexBuffer[index] - average);
+    if(length(vertexBuffer[index+1] - average) > biggest)
+        biggest = length(vertexBuffer[index+1] - average);
+    if(length(vertexBuffer[index+2] - average) > biggest)
+        biggest = length(vertexBuffer[index+2]- average);
+    if(length(vertexBuffer[index+3] - average) > biggest)
+        biggest = length(vertexBuffer[index+3] - average);
+
+    float3 jitter = float3(TextureNoise(vertexBuffer[index] * 10, fuzzNoiseScale, fuzzNoiseStrength),
+        TextureNoise(vertexBuffer[index]* 10 + float3(12,34,56), fuzzNoiseScale, fuzzNoiseStrength),
+        TextureNoise(vertexBuffer[index]* 10 + float3(-56,-34,-12), fuzzNoiseScale, fuzzNoiseStrength));
+    float3 direction = normalize(vertexBuffer[index] * (1-fuzzRotationOffset) + normal * fuzzRotationOffset + jitter - average);
+    float3 flip = -direction;
+    float3 c = normalize(cross(normal , direction));
+    float3 cFlip = -c;
+
+    vertexBuffer[index] = average + direction * fuzzScale;  // * biggest;  // / scale;
+    vertexBuffer[index+1] = average + c * fuzzScale;  // * biggest;  // / scale;
+    vertexBuffer[index+2] = average + flip * fuzzScale;  // * biggest;  // / scale;
+    vertexBuffer[index+3] = average + direction * fuzzScale;  // * biggest;  // / scale;
+    vertexBuffer[index+4] = average + flip * fuzzScale;
+    vertexBuffer[index+5] = average + cFlip * fuzzScale;
+
+    //verts[index] = average + new Vector3(-1,-1,0) / 1;
+    //verts[index+1] = average + new Vector3(-1,1,0) / 1;
+    //verts[index+2] = average + new Vector3(1,1,0) / 1;
+    //verts[index+3] = average + new Vector3(-1,-1,0) / 1;
+    //verts[index+4] = average + new Vector3(1,1,0) / 1;
+    //verts[index+5] = average + new Vector3(1,-1,0) / 1;
+
+    uvBuffer[index] = float2(0,0);
+    uvBuffer[index+1] = float2(0,1);
+    uvBuffer[index+2] = float2(1,1);
+    uvBuffer[index+3] = float2(0,0);
+    uvBuffer[index+4] = float2(1,1);
+    uvBuffer[index+5] = float2(1,0);
+
+    colorBuffer[index] = col;
+    colorBuffer[index+1] = col;
+    colorBuffer[index+2] = col;
+    colorBuffer[index+3] = col;
+    colorBuffer[index+4] = col;
+    colorBuffer[index+5] = col;
+
+    normalBuffer[index] = normal;
+    normalBuffer[index+1] = normal;
+    normalBuffer[index+2] = normal;
+    normalBuffer[index+3] = normal;
+    normalBuffer[index+4] = normal;
+    normalBuffer[index+5] = normal;
+}
+
+[numthreads(64,1,1)]
+void RandomAlpha (uint3 id : SV_DispatchThreadID)
+{
+    int index = id.x * 6;
+
+    //float4 col = (colorBuffer[index] + colorBuffer[index+1] + colorBuffer[index+2] + colorBuffer[index+3] + colorBuffer[index+4] + colorBuffer[index+5])/6;
+    float col = TextureNoise(vertexBuffer[index] * 10, fuzzNoiseScale, fuzzNoiseStrength);
+
+    colorBuffer[index].a = col;
+    colorBuffer[index+1].a = col;
+    colorBuffer[index+2].a = col;
+    colorBuffer[index+3].a = col;
+    colorBuffer[index+4].a = col;
+    colorBuffer[index+5].a = col;
+}
+
+
+[numthreads(64,1,1)]
+void OnMeshSurface (uint3 id : SV_DispatchThreadID)
+{
+    float math = id.x;
+    math /= density;
+    int index = math * 3;//floor(math) * 3;
+
+    float3 average = float3(10,20,30);   // = (vertexBuffer[index] + vertexBuffer[index+1] + vertexBuffer[index+2])/3;
+    float3 normal = float3(80,90,10);    // = (normalBuffer[index] + normalBuffer[index+1] + normalBuffer[index+2])/3;
+    //normal = normalize(normal);
+
+    float rand = (TextureNoise(vertexBuffer[index] * timeOffset * (id.x+1), 1.5f, 1) + 1)/2;
+    //float2 coord = float2(vertexBuffer[triangleBuffer[index]].x *(id.x * 15 + 1), vertexBuffer[triangleBuffer[index]].y * (id.x * 15 + 1) - vertexBuffer[triangleBuffer[index]].z * 15 );
+    //float densityRand = noiseTexture[coord].r * 15;   //TextureNoise(vertexBuffer[index] * (id.x * 150 + 1), 0.5f, 1);
+    //coord = float2(vertexBuffer[triangleBuffer[index + 1]].x *(id.x * 15 + 1), vertexBuffer[triangleBuffer[index + 1]].y * (id.x * densityRand + 1) - vertexBuffer[triangleBuffer[index + 1]].z * 15 );
+    //float a = noiseTexture[coord].r;   //(TextureNoise(vertexBuffer[index] * densityRand, 0.5f, 10) + 10) / 20;
+    //coord = float2(vertexBuffer[triangleBuffer[index + 2]].x *(id.x * 15 + 1), vertexBuffer[triangleBuffer[index + 2]].y * (id.x * densityRand + 1) - vertexBuffer[triangleBuffer[index + 2]].z * 15 );
+    //float b = noiseTexture[coord].r;   //((TextureNoise(vertexBuffer[index+1] * densityRand, 0.5f, 10) + 10) / 20);
+    //float c = (2 - (a + b))/2;
+
+    //a = min(1,max(a,0));
+    //b = min(1,max(b,0));
+    //c = min(1,max(c,0));
+
+    //a = 0.333f;
+    //b = 0.333f;
+    //c = 0.333f;
+    float a = 0.15f;
+    float b = 0.55f;
+    float c = 0.3;
+
+    int off = round(timeOffset);
+
+    if((id.x + off) % 10 == 0)
+    {
+        a = 0;//0.25f;
+        b = 0;//0.65f;
+        c = 1;//0.1;
+    }
+    if((id.x + off) % 10 == 1)
+    {
+        a = 0;//0.15f;
+        b = 1;//0.55f;
+        c = 0;//0.3;
+    }
+    if((id.x + off) % 10 == 2)
+    {
+        a = 1;//0.05f;
+        b = 0;//0.25f;
+        c = 0;//0.7;
+    }
+    if((id.x + off) % 10 == 3)
+    {
+        a = 0;//0.1f;
+        b = 0.5f;//0.35f;
+        c = 0.5f;//0.55;
+    }
+    if((id.x + off) % 10 == 4)
+    {
+        a = 0.5f;//0.45f;
+        b = 0.5f;//0.15f;
+        c = 0;//0.4;
+    }
+    if((id.x + off) % 10 == 5)
+    {
+        a = 0.5f;//0.5f;
+        b = 0.0f;//0.1f;
+        c = 0.5f;//0.4;
+    }
+    if((id.x + off) % 10 == 6)
+    {
+        a = 1;//0.25f;
+        b = 0;//0.65f;
+        c = 0;//0.1;
+    }
+    if((id.x + off) % 10 == 7)
+    {
+        a = 0;//0.15f;
+        b = 0;//0.55f;
+        c = 1;//0.3;
+    }
+    if((id.x + off) % 10 == 8)
+    {
+        a = 0;//0.05f;
+        b = 1;//0.25f;
+        c = 0;//0.7;
+    }
+    if((id.x + off) % 10 == 9)
+    {
+        a = 0.1;//0.1f;
+        b = 0.5f;//0.35f;
+        c = 0.4f;//0.55;
+    }
+
+    a = lerpFloat(a, 0.3333f, rand);
+    b = lerpFloat(b, 0.3333f, rand);
+    c = lerpFloat(c, 0.3333f, rand);
+
+    //if(densityRand <= 0.25f)
+    //{
+    //    average = (vertexBuffer[triangleBuffer[index]] * a + vertexBuffer[triangleBuffer[index+1]] * b + vertexBuffer[triangleBuffer[index+2]] * c)/3;
+    //    normal = (normalBuffer[triangleBuffer[index]] * a + normalBuffer[triangleBuffer[index+1]] * b + normalBuffer[triangleBuffer[index+2]] * c)/3;
+    //}
+    //else if(densityRand <= 0.5f)
+    //{
+    //    average = (vertexBuffer[triangleBuffer[index]] * b + vertexBuffer[triangleBuffer[index+1]] * c + vertexBuffer[triangleBuffer[index+2]] * a)/3;
+    //    normal = (normalBuffer[triangleBuffer[index]] * b + normalBuffer[triangleBuffer[index+1]] * c + normalBuffer[triangleBuffer[index+2]] * a)/3;
+    //}
+    //else if(densityRand <= 0.75f)
+    //{
+    //    average = (vertexBuffer[triangleBuffer[index]] * c + vertexBuffer[triangleBuffer[index+1]] * a + vertexBuffer[triangleBuffer[index+2]] * b)/3;
+    //    normal = (normalBuffer[triangleBuffer[index]] * c + normalBuffer[triangleBuffer[index+1]] * a + normalBuffer[triangleBuffer[index+2]] * b)/3;
+    //}
+    //else
+    //{
+        average = (vertexBuffer[triangleBuffer[index]] * a + vertexBuffer[triangleBuffer[index+1]] * c + vertexBuffer[triangleBuffer[index+2]] * b)/3;
+        normal = (normalBuffer[triangleBuffer[index]] * a + normalBuffer[triangleBuffer[index+1]] * c + normalBuffer[triangleBuffer[index+2]] * b)/3;
+    //}
+
+    average = (mul(inverse(objToWorld), float4(average, 1))).xyz;
+    normal = (mul(inverse(objToWorld), float4(normal, 1))).xyz;
+
+    //average = vertexBuffer[math];//float3(id.x,0,0);
+    //average = (mul(inverse(objToWorld), float4(average, 1))).xyz;
+
+    spawnPosBuffer[id.x] = average * 3.0f;
+    spawnNormBuffer[id.x] = normal;
+
+    boundsCheckBuffer[id.x] = 1;
+
+    average = average * 3.0f;         //(mul(inverse(objToWorld), float4(average * 3.0f, 1))).xyz;
+    float3 bce = boundsCenter.xyz;    //(mul(objToWorld, boundsCenter)).xyz;
+    float3 bfr = boundsFront.xyz;     //(mul(objToWorld, boundsFront)).xyz;
+    float3 bba = boundsBack.xyz;      //(mul(objToWorld, boundsBack)).xyz;
+    float3 bri = boundsRight.xyz;     //(mul(objToWorld, boundsRight)).xyz;
+    float3 ble = boundsLeft.xyz;      //(mul(objToWorld, boundsLeft)).xyz;
+    float3 bto = boundsTop.xyz;       //(mul(objToWorld, boundsTop)).xyz;
+    float3 bbo = boundsBottom.xyz;    //(mul(objToWorld, boundsBottom)).xyz;
+    average += surfacePosition;
+
+    if(dot(average - bfr, bce - bfr) < 0)
+        boundsCheckBuffer[id.x] = 0;
+    if(dot(average - bba, bce - bba) < 0)
+        boundsCheckBuffer[id.x] = 0;
+    if(dot(average - bri, bce - bri) < 0)
+        boundsCheckBuffer[id.x] = 0;
+    if(dot(average - ble, bce - ble) < 0)
+        boundsCheckBuffer[id.x] = 0;
+    if(dot(average - bto, bce - bto) < 0)
+        boundsCheckBuffer[id.x] = 0;
+    if(dot(average - bbo, bce - bbo) < 0)
+        boundsCheckBuffer[id.x] = 0;
+    
+    //spawnPosBuffer[id.x] = vertexBuffer[triangleBuffer[index]]; //float3(triangleBuffer[index],triangleBuffer[index+1],triangleBuffer[index+2]);
+}
+
+[numthreads(64,1,1)]
+void FlipOverAxis (uint3 id : SV_DispatchThreadID)
+{
+    //int index = id.x * 6;
+    if(xAxis == 1)
+    {
+        vertexBuffer[id.x] = float3(vertexBuffer[id.x].x * -1, vertexBuffer[id.x].y, vertexBuffer[id.x].z);
+        normalBuffer[id.x] = float3(normalBuffer[id.x].x * -1, normalBuffer[id.x].y, normalBuffer[id.x].z);//normalBuffer[id.x] * -1;
+    }
+    if(yAxis == 1)
+    {
+        vertexBuffer[id.x] = float3(vertexBuffer[id.x].x, vertexBuffer[id.x].y * -1, vertexBuffer[id.x].z);
+        normalBuffer[id.x] = float3(normalBuffer[id.x].x, normalBuffer[id.x].y * -1, normalBuffer[id.x].z);//normalBuffer[id.x] * -1;
+    }
+    if(zAxis == 1)
+    {
+        vertexBuffer[id.x] = float3(vertexBuffer[id.x].x, vertexBuffer[id.x].y, vertexBuffer[id.x].z * -1);
+        normalBuffer[id.x] = float3(normalBuffer[id.x].x, normalBuffer[id.x].y, normalBuffer[id.x].z * -1);//normalBuffer[id.x] * -1;
+    }
+
+
+}
